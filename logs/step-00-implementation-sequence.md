@@ -45,9 +45,9 @@ This log establishes the step boundaries for implementing the architecture in `P
 - Step 10: Complete.
 - Step 11: Complete.
 - Step 12: Complete.
-- Step 13: Not started.
-- Step 14: Not started.
-- Step 15: Not started.
-- Step 16: Not started.
-- Step 17: Not started.
-- Step 18: Not started.
+- Step 13: Complete.
+- Step 14: Complete.
+- Step 15: Complete.
+- Step 16: Complete.
+- Step 17: Complete.
+- Step 18: Complete.

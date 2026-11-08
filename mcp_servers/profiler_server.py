@@ -6,9 +6,21 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from core.embeddings import (
+    DeterministicEmbeddingProvider,
+    EmbeddingCache,
+    OllamaEmbeddingProvider,
+    SemanticEmbedder,
+)
 from .contracts import ToolRegistry, create_registry
 
 DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "user_state.db"
+EMBEDDING_CACHE_PATH = Path(__file__).resolve().parents[1] / "data" / "embeddings.db"
+EMBEDDER = SemanticEmbedder(
+    OllamaEmbeddingProvider(),
+    EmbeddingCache(EMBEDDING_CACHE_PATH),
+    fallback_provider=DeterministicEmbeddingProvider(),
+)
 VIBE_DIMENSIONS = (
     "culture",
     "history",
@@ -56,6 +68,19 @@ def _vibe_from_text(text: str) -> dict[str, Any]:
     }
 
 
+def _semantic_embedding(item_id: str, text: str) -> dict[str, Any]:
+    try:
+        return EMBEDDER.embed_for_with_metadata(item_id, text)
+    except RuntimeError:
+        offline = SemanticEmbedder.offline()
+        vector = offline.embed_for(item_id, text)
+        return {
+            "embedding": vector,
+            "model": offline.provider.model_name,
+            "fallback": True,
+        }
+
+
 def _venue_profile_rows(venue_id: str) -> list[sqlite3.Row]:
     with _connect() as connection:
         venue = connection.execute(
@@ -99,23 +124,43 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 def extract_text_vibe(text: str) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise ValueError("text must not be empty")
-    return _vibe_from_text(text)
+    semantic = _semantic_embedding("text", text)
+    return {
+        **semantic,
+        "embedding_model": semantic["model"],
+        "dimensions": dict(zip(VIBE_DIMENSIONS, semantic["embedding"])),
+    }
 
 
 def get_visitor_profile(venue_id: str) -> dict[str, Any]:
     rows = _venue_profile_rows(venue_id)
-    if not rows:
+    embedding_metadata = [
+        _semantic_embedding(f"{venue_id}:{index}", row["review_text"])
+        for index, row in enumerate(rows)
+    ]
+    if not embedding_metadata:
         embedding = _normalize([0.0] * len(VIBE_DIMENSIONS))
+        model = EMBEDDER.provider.model_name
+        fallback = False
     else:
-        embeddings = [_vibe_from_text(row["review_text"])["embedding"] for row in rows]
-        embedding = _normalize(
-            [sum(values[index] for values in embeddings) for index in range(len(VIBE_DIMENSIONS))]
-        )
+        vectors = [metadata["embedding"] for metadata in embedding_metadata]
+        dimensions = len(vectors[0])
+        embedding = [
+            sum(vector[index] for vector in vectors) / len(vectors)
+            for index in range(dimensions)
+        ]
+        magnitude = math.sqrt(sum(value * value for value in embedding))
+        if magnitude:
+            embedding = [value / magnitude for value in embedding]
+        model = embedding_metadata[0]["model"]
+        fallback = any(metadata["fallback"] for metadata in embedding_metadata)
     return {
         "venue_id": venue_id,
         "review_count": len(rows),
         "dimensions": dict(zip(VIBE_DIMENSIONS, embedding)),
         "embedding": embedding,
+        "embedding_model": model,
+        "fallback": fallback,
     }
 
 
@@ -139,7 +184,8 @@ def score_venue_compatibility(
         if user is not None
         else user_text_or_id
     )
-    user_embedding = _vibe_from_text(user_text)["embedding"]
+    user_metadata = _semantic_embedding("user-input", user_text)
+    user_embedding = user_metadata["embedding"]
     results = []
     for venue_id in candidate_venue_ids:
         profile = get_visitor_profile(venue_id)
@@ -150,6 +196,8 @@ def score_venue_compatibility(
                     max(0.0, min(1.0, _cosine_similarity(user_embedding, profile["embedding"]))),
                     6,
                 ),
+                "embedding_model": profile["embedding_model"],
+                "fallback": bool(user_metadata["fallback"] or profile["fallback"]),
             }
         )
     return sorted(results, key=lambda item: (-item["score"], item["venue_id"]))

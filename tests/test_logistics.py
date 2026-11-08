@@ -59,6 +59,26 @@ def test_calculate_travel_matrix_rejects_unknown_mode_or_venue(database_path):
         logistics_server.calculate_travel_matrix(["missing"])
 
 
+def test_calculate_travel_matrix_uses_cached_route(database_path, monkeypatch):
+    class CachedRoute:
+        def get(self, source, destination, mode):
+            return {
+                "distance_meters": 1234.0,
+                "duration_minutes": 12.5,
+                "source": "cache",
+            }
+
+    monkeypatch.setattr(logistics_server, "ROUTE_CACHE", CachedRoute())
+    monkeypatch.setattr(logistics_server, "OSRM_ROUTER", None)
+    matrix = logistics_server.calculate_travel_matrix(
+        ["venue_museum", "venue_market"],
+        travel_mode="walking",
+    )
+
+    assert matrix["distances"]["venue_museum"]["venue_market"] == 1234.0
+    assert matrix["travel_times"]["venue_museum"]["venue_market"] == 12.5
+
+
 def test_check_venue_open_status_includes_opening_boundaries(database_path):
     assert logistics_server.check_venue_open_status(
         "venue_museum", "mon", "09:00"

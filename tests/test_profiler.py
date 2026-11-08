@@ -1,4 +1,5 @@
 import pytest
+import math
 
 from core.database import initialize_database
 from mcp_servers import profiler_server
@@ -21,9 +22,10 @@ def test_extract_text_vibe_is_deterministic_and_normalized():
     )
 
     assert first == second
-    assert first["dimensions"]["culture"] > 0
-    assert first["dimensions"]["history"] > 0
-    assert sum(first["embedding"]) == pytest.approx(1.0)
+    assert first["embedding_model"]
+    assert math.sqrt(sum(value * value for value in first["embedding"])) == pytest.approx(
+        1.0
+    )
 
 
 def test_extract_text_vibe_rejects_empty_text():
@@ -36,8 +38,10 @@ def test_get_visitor_profile_aggregates_review_vibes(database_path):
 
     assert profile["venue_id"] == "venue_museum"
     assert profile["review_count"] == 1
-    assert profile["dimensions"]["history"] > 0
-    assert sum(profile["embedding"]) == pytest.approx(1.0)
+    assert profile["embedding_model"]
+    assert math.sqrt(sum(value * value for value in profile["embedding"])) == pytest.approx(
+        1.0
+    )
 
 
 def test_get_visitor_profile_rejects_unknown_venue(database_path):

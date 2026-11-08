@@ -2,7 +2,7 @@ import json
 import sqlite3
 
 from core.database import initialize_database
-from scripts.import_data import import_yelp, split_mbti_users
+from scripts.import_data import import_yelp, resolve_yelp_files, split_mbti_users
 
 
 def write_json_lines(path, records):
@@ -50,13 +50,37 @@ def test_import_yelp_maps_business_users_and_reviews(tmp_path):
 
     database = tmp_path / "user_state.db"
     initialize_database(database)
-    report = import_yelp(raw, database)
+    report = import_yelp(raw, database, cities={"Amsterdam"})
 
-    assert report == {"businesses": 1, "users": 1, "reviews": 1, "skipped": 0}
+    assert report == {
+        "businesses": 1,
+        "users": 1,
+        "reviews": 1,
+        "filtered_businesses": 0,
+        "filtered_reviews": 0,
+        "skipped": 0,
+    }
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM venues").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM interactions").fetchone()[0] == 1
+
+
+def test_import_yelp_resolves_academic_filenames_and_scopes_businesses(tmp_path):
+    raw = tmp_path / "yelp"
+    raw.mkdir()
+    for filename in (
+        "yelp_academic_dataset_business.json",
+        "yelp_academic_dataset_user.json",
+        "yelp_academic_dataset_review.json",
+    ):
+        (raw / filename).write_text("", encoding="utf-8")
+
+    files = resolve_yelp_files(raw)
+
+    assert files["business"].name == "yelp_academic_dataset_business.json"
+    assert files["user"].name == "yelp_academic_dataset_user.json"
+    assert files["review"].name == "yelp_academic_dataset_review.json"
 
 
 def test_import_yelp_is_idempotent_and_skips_malformed_records(tmp_path):
@@ -74,8 +98,8 @@ def test_import_yelp_is_idempotent_and_skips_malformed_records(tmp_path):
 
     database = tmp_path / "user_state.db"
     initialize_database(database)
-    first = import_yelp(raw, database)
-    second = import_yelp(raw, database)
+    first = import_yelp(raw, database, cities={"Amsterdam"})
+    second = import_yelp(raw, database, cities={"Amsterdam"})
 
     assert first["skipped"] == 1
     assert second["skipped"] == 1

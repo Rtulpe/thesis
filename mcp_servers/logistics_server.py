@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+from core.routing import CachedRouter, OSRMRouter
 from .contracts import ToolRegistry, create_registry
 
 DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "user_state.db"
@@ -15,6 +17,14 @@ TRAVEL_MODE_SPEEDS_KMH = {
     "driving": 30.0,
 }
 VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+ROUTE_CACHE = CachedRouter(
+    Path(__file__).resolve().parents[1] / "data" / "routing_cache.json"
+)
+OSRM_ROUTER = (
+    OSRMRouter(os.environ["OSRM_BASE_URL"])
+    if os.environ.get("OSRM_BASE_URL")
+    else None
+)
 
 
 def _connect() -> sqlite3.Connection:
@@ -122,17 +132,37 @@ def calculate_travel_matrix(
         for destination_id in venue_ids:
             if source_id == destination_id:
                 distance = 0.0
+                travel_time = 0.0
             else:
                 source = venues[source_id]
                 destination = venues[destination_id]
-                distance = _haversine_meters(
-                    source["latitude"],
-                    source["longitude"],
-                    destination["latitude"],
-                    destination["longitude"],
-                )
+                route = ROUTE_CACHE.get(source_id, destination_id, travel_mode)
+                if route is None and OSRM_ROUTER is not None:
+                    try:
+                        route = OSRM_ROUTER.route(
+                            (source["longitude"], source["latitude"]),
+                            (destination["longitude"], destination["latitude"]),
+                            travel_mode,
+                        )
+                        ROUTE_CACHE.put(source_id, destination_id, travel_mode, route)
+                    except RuntimeError:
+                        route = None
+                if route is not None:
+                    distance = route["distance_meters"]
+                    travel_time = route["duration_minutes"]
+                else:
+                    distance = _haversine_meters(
+                        source["latitude"],
+                        source["longitude"],
+                        destination["latitude"],
+                        destination["longitude"],
+                    )
+                    speed_m_per_minute = (
+                        TRAVEL_MODE_SPEEDS_KMH[travel_mode] * 1000 / 60
+                    )
+                    travel_time = distance / speed_m_per_minute
             distances[source_id][destination_id] = distance
-            travel_times[source_id][destination_id] = distance / speed_m_per_minute
+            travel_times[source_id][destination_id] = travel_time
     return {"travel_times": travel_times, "distances": distances}
 
 

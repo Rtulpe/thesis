@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -77,8 +78,6 @@ class MCPClientSession:
         self.bridge: MCPToolBridge | None = None
 
     async def __aenter__(self) -> MCPToolBridge:
-        from contextlib import AsyncExitStack
-
         self._exit_stack = AsyncExitStack()
         await self._exit_stack.__aenter__()
         read_stream, write_stream = await self._exit_stack.enter_async_context(
@@ -95,3 +94,58 @@ class MCPClientSession:
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
         if self._exit_stack is not None:
             await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
+
+
+class MultiServerMCPClient:
+    SERVER_NAMES = ("user-state", "logistics", "profiler", "itinerary")
+
+    def __init__(self, server_names: tuple[str, ...] | None = None) -> None:
+        self._server_names = server_names or self.SERVER_NAMES
+        invalid = set(self._server_names) - set(self.SERVER_NAMES)
+        if invalid:
+            raise ValueError(f"Unknown MCP servers: {', '.join(sorted(invalid))}")
+        self._exit_stack: AsyncExitStack | None = None
+        self._bridges: dict[str, MCPToolBridge] = {}
+        self._tools: dict[str, tuple[str, str]] = {}
+
+    async def __aenter__(self) -> "MultiServerMCPClient":
+        self._exit_stack = AsyncExitStack()
+        await self._exit_stack.__aenter__()
+        try:
+            for name in self._server_names:
+                self._bridges[name] = await self._exit_stack.enter_async_context(
+                    MCPClientSession(name)
+                )
+            await self.schemas()
+            return self
+        except BaseException:
+            await self._exit_stack.__aexit__(*sys.exc_info())
+            self._exit_stack = None
+            raise
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        if self._exit_stack is not None:
+            await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
+            self._exit_stack = None
+            self._bridges.clear()
+            self._tools.clear()
+
+    async def schemas(self) -> list[dict[str, Any]]:
+        discovered = await asyncio.gather(
+            *(self._bridges[name].schemas() for name in self._server_names)
+        )
+        schemas: list[dict[str, Any]] = []
+        self._tools.clear()
+        for server_name, server_schemas in zip(self._server_names, discovered):
+            for schema in server_schemas:
+                namespaced_name = f"{server_name}.{schema['name']}"
+                self._tools[namespaced_name] = (server_name, schema["name"])
+                schemas.append({**schema, "name": namespaced_name})
+        return schemas
+
+    async def call(self, name: str, arguments: dict[str, Any]) -> Any:
+        try:
+            server_name, tool_name = self._tools[name]
+        except KeyError:
+            raise ValueError(f"Unknown MCP tool: {name}") from None
+        return await self._bridges[server_name].call(tool_name, arguments)
