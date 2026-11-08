@@ -20,6 +20,17 @@
 5. Implement the constraint and itinerary engine with feasible scheduling and route optimization.
 6. Implement the orchestrator and prompt contract across all MCP tools.
 7. Add constraint and benchmark evaluations, documentation, and run the complete validation suite.
+8. Wrap the server tools in actual MCP transports using the Model Context Protocol SDK.
+9. Integrate an LLM client into the orchestrator with tourism-assistant system instructions.
+10. Add dynamic LLM function/tool calling over the MCP server tools and validate end-to-end responses.
+11. Connect the dynamic orchestrator to MCP server processes through SDK client sessions.
+12. Import a real tourism/review dataset into the SQLite schema with reproducible mappings.
+13. Add a multi-server MCP orchestration session managing all four servers concurrently.
+14. Replace keyword profiling with Ollama `nomic-embed-text` semantic embeddings and persisted/cacheable vectors.
+15. Add realistic routing through OSRM or a documented local routing-matrix cache.
+16. Add opt-in live Ollama validation using `qwen3.5:4b` and MCP tool calling.
+17. Add a user-facing CLI for real recommendation requests.
+18. Expand benchmark evaluation against static baselines and report thesis metrics.
 
 ## Step management
 

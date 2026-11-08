@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import json
+import inspect
+from dataclasses import dataclass
+
+from .llm_client import LLMClient, ToolCallingLLMClient
+from .prompts import ANSWER_PROMPT_TEMPLATE, SYSTEM_PROMPT
 
 class TravelTools(Protocol):
     def get_user_profile(self, user_id: str) -> dict[str, Any]: ...
@@ -32,8 +38,24 @@ class TravelTools(Protocol):
 
 
 class TravelOrchestrator:
-    def __init__(self, tools: TravelTools) -> None:
+    def __init__(
+        self,
+        tools: TravelTools,
+        llm_client: LLMClient | None = None,
+    ) -> None:
         self._tools = tools
+        self._llm_client = llm_client
+
+    def answer(self, **kwargs: Any) -> dict[str, Any]:
+        if self._llm_client is None:
+            raise RuntimeError("An LLM client is required to generate an answer")
+        plan = self.plan(**kwargs)
+        prompt = ANSWER_PROMPT_TEMPLATE.format(
+            city=plan["explanation"]["city"],
+            user_state=plan["explanation"]["user_state"],
+            itinerary=plan,
+        )
+        return {**plan, "response": self._llm_client.complete(SYSTEM_PROMPT, prompt)}
 
     def plan(
         self,
@@ -108,3 +130,150 @@ class TravelOrchestrator:
                 ],
             },
         }
+
+
+@dataclass(frozen=True)
+class DynamicToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+class DynamicToolOrchestrator:
+    def __init__(
+        self,
+        tools: Any,
+        llm_client: ToolCallingLLMClient,
+        *,
+        max_rounds: int = 8,
+    ) -> None:
+        if max_rounds <= 0:
+            raise ValueError("max_rounds must be greater than zero")
+        self._tools = tools
+        self._llm_client = llm_client
+        self._max_rounds = max_rounds
+
+    def _tool_schemas(self) -> list[dict[str, Any]]:
+        schemas = []
+        for name, function in inspect.getmembers(self._tools, predicate=callable):
+            if name.startswith("_"):
+                continue
+            signature = inspect.signature(function)
+            properties = {}
+            required = []
+            for parameter_name, parameter in signature.parameters.items():
+                if parameter.kind in (
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                ):
+                    continue
+                annotation = parameter.annotation
+                properties[parameter_name] = {
+                    "type": "string" if annotation is str else "object"
+                }
+                if parameter.default is inspect.Parameter.empty:
+                    required.append(parameter_name)
+            schemas.append(
+                {
+                    "name": name,
+                    "description": inspect.getdoc(function) or f"Call {name}",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                }
+            )
+        return schemas
+
+    def run(self, user_prompt: str) -> dict[str, Any]:
+        if not user_prompt or not user_prompt.strip():
+            raise ValueError("user_prompt must not be empty")
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": user_prompt.strip()}
+        ]
+        schemas = self._tool_schemas()
+        available = {schema["name"] for schema in schemas}
+        tool_results = []
+        for _ in range(self._max_rounds):
+            response = self._llm_client.complete_with_tools(
+                SYSTEM_PROMPT,
+                messages,
+                schemas,
+            )
+            tool_calls = response.get("tool_calls", [])
+            if not tool_calls:
+                content = response.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    raise RuntimeError("LLM response did not contain a final answer")
+                return {"response": content.strip(), "tool_results": tool_results}
+            messages.append({"role": "assistant", "tool_calls": tool_calls})
+            for raw_call in tool_calls:
+                call = DynamicToolCall(
+                    id=raw_call["id"],
+                    name=raw_call["name"],
+                    arguments=raw_call.get("arguments", {}),
+                )
+                if call.name not in available:
+                    raise ValueError(f"Unknown tool: {call.name}")
+                function = getattr(self._tools, call.name)
+                try:
+                    result = function(**call.arguments)
+                except TypeError as error:
+                    raise ValueError(
+                        f"Invalid arguments for tool {call.name}: {error}"
+                    ) from error
+                tool_results.append(
+                    {"id": call.id, "name": call.name, "result": result}
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
+        raise RuntimeError("Reached maximum dynamic tool-calling rounds")
+
+    async def run_async(self, user_prompt: str) -> dict[str, Any]:
+        if not user_prompt or not user_prompt.strip():
+            raise ValueError("user_prompt must not be empty")
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": user_prompt.strip()}
+        ]
+        schemas = await self._tools.schemas()
+        available = {schema["name"] for schema in schemas}
+        tool_results = []
+        for _ in range(self._max_rounds):
+            response = self._llm_client.complete_with_tools(
+                SYSTEM_PROMPT,
+                messages,
+                schemas,
+            )
+            tool_calls = response.get("tool_calls", [])
+            if not tool_calls:
+                content = response.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    raise RuntimeError("LLM response did not contain a final answer")
+                return {"response": content.strip(), "tool_results": tool_results}
+            messages.append({"role": "assistant", "tool_calls": tool_calls})
+            for raw_call in tool_calls:
+                call = DynamicToolCall(
+                    id=raw_call["id"],
+                    name=raw_call["name"],
+                    arguments=raw_call.get("arguments", {}),
+                )
+                if call.name not in available:
+                    raise ValueError(f"Unknown MCP tool: {call.name}")
+                result = await self._tools.call(call.name, call.arguments)
+                tool_results.append(
+                    {"id": call.id, "name": call.name, "result": result}
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
+        raise RuntimeError("Reached maximum dynamic tool-calling rounds")

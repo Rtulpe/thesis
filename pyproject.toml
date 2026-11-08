@@ -7,7 +7,9 @@ name = "agentic-tourism-mcp"
 version = "0.1.0"
 description = "Agentic MCP tourist recommendation and itinerary system"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "mcp>=1.0,<2",
+]
 
 [project.optional-dependencies]
 test = [

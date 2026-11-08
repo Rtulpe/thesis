@@ -207,3 +207,63 @@ agentic_tourism_mcp/
 4. [ ] **TTDP Solver Engine:** Build the greedy insertion + 2-opt local search optimization loop for route building inside Server D.
 5. [ ] **Agent Loop Integration:** Wire the LLM agent (LangChain / LlamaIndex / AutoGen / custom loop) to interface with all four MCP endpoints.
 6. [ ] **Benchmarking:** Implement `evaluation/constraint_test.py` to compare agent constraint violation rates against static recommendation baselines.
+## 8. Extended Implementation Steps
+
+8. [ ] **MCP Transport:** Wrap the four server tool registries in actual Model Context Protocol SDK servers and expose them over standard I/O or HTTP.
+9. [ ] **LLM Client Integration:** Connect an LLM client to the orchestrator and provide tourism-assistant system instructions.
+10. [ ] **Dynamic Tool Calling:** Pass MCP tool schemas to the LLM, execute selected tools dynamically, and build final responses from returned tool results.
+11. [ ] **MCP Client Session:** Connect the orchestrator to MCP server processes through SDK client sessions, discover their tools, and execute calls over MCP.
+
+## 9. Thesis-Grade Extensions
+
+The deterministic seed data, keyword profiler, Haversine routing, and greedy itinerary
+solver implemented in earlier steps are functional baselines. The following extensions
+upgrade those baselines for reproducible thesis evaluation.
+
+12. [ ] **Real Tourism Dataset and Import**
+    - Add `scripts/import_data.py` for supported CSV and JSON inputs.
+    - Map users, venues, interactions, reviews, ratings, coordinates, categories, and
+      opening hours into the existing SQLite schema.
+    - Validate required fields, normalize ratings and timestamps, reject malformed
+      records with useful diagnostics, and support deterministic reruns.
+    - Add import fixtures and integration tests without committing generated databases.
+
+13. [ ] **Multi-Server MCP Orchestration**
+    - Manage all four MCP server sessions concurrently in one execution context.
+    - Discover and namespace tools without collisions.
+    - Preserve user, destination, ranking, and itinerary context across multi-round calls.
+    - Close all sessions reliably on success and failure.
+
+14. [ ] **Semantic Embeddings with `nomic-embed-text`**
+    - Add an Ollama embedding provider behind a swappable embedding protocol.
+    - Replace keyword-only compatibility scoring with cosine similarity over real vectors.
+    - Persist or cache venue and user-review embeddings with model/version metadata.
+    - Keep a deterministic explicit fallback for offline tests; live embedding tests must
+      be opt-in and never silently claim semantic validation.
+
+15. [ ] **Realistic or Cached Routing**
+    - Add an OSRM-compatible routing adapter or documented local distance-matrix cache.
+    - Support walking and additional configured travel modes where data exists.
+    - Preserve a clearly reported Haversine fallback when routing is unavailable.
+    - Test cache hits, cache misses, malformed responses, and fallback behavior.
+
+16. [ ] **Live Ollama Tool-Calling Validation**
+    - Add an opt-in test/validation script targeting `qwen3.5:4b`.
+    - Verify tool-schema interpretation, argument generation, MCP execution, multi-round
+      continuation, and final response synthesis.
+    - Skip with an explicit reason when Ollama, the model, or a reachable MCP session is
+      unavailable; do not make live services mandatory for the deterministic suite.
+
+17. [ ] **User-Facing CLI**
+    - Add an `argparse` command accepting user ID, city, start/end times, preferences,
+      category, and optional model/server configuration.
+    - Return structured itinerary output and readable explanations.
+    - Surface configuration, MCP, LLM, and validation errors explicitly with non-zero exits.
+    - Add subprocess/CLI tests using fake providers and a deterministic offline mode.
+
+18. [ ] **Thesis Benchmark Framework**
+    - Add automated query fixtures and reproducible benchmark execution.
+    - Compare the agentic system with random and non-personalized popularity baselines.
+    - Report itinerary feasibility, constraint-violation rate, relevance/compatibility,
+      venue coverage, dropped-candidate rate, latency, and tool-call counts.
+    - Export machine-readable results and a concise human-readable summary.
