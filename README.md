@@ -35,6 +35,14 @@ imports; categories and per-business limits are optional. Tips and check-ins are
 not imported. MBTI data is kept separately under `data/raw/mbti` and is not
 imported into the tourism database.
 
+By default, users are created from retained review IDs without scanning the
+3.3 GB Yelp user file. Add `--enrich-user-metadata` only when you need Yelp user
+names and source review counts; this performs the additional full user-file scan.
+If no businesses match `--cities`, the importer exits after scanning the business
+file and does not open the review or user files.
+Long review scans report progress to stderr every 100,000 records by default;
+override this with `--progress-every`.
+
 ## Validation
 
 Run the complete test suite:

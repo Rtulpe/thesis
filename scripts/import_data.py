@@ -4,6 +4,8 @@ import argparse
 import json
 import random
 import sqlite3
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -78,6 +80,8 @@ def import_yelp(
     categories: set[str] | None = None,
     max_businesses: int | None = None,
     max_reviews_per_business: int | None = None,
+    enrich_user_metadata: bool = False,
+    progress_every: int = 100_000,
     batch_size: int = 1000,
 ) -> dict[str, int]:
     files = resolve_yelp_files(raw_directory)
@@ -89,6 +93,8 @@ def import_yelp(
         raise ValueError("max_reviews_per_business must be greater than zero")
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than zero")
+    if progress_every <= 0:
+        raise ValueError("progress_every must be greater than zero")
     initialize_database(database_path)
     counts = {
         "businesses": 0,
@@ -180,47 +186,28 @@ def import_yelp(
                 business_batch,
             )
             counts["businesses"] += len(business_batch)
-        review_user_ids: set[str] = set()
-        review_candidates: dict[str, int] = {}
-        for record in _read_json_lines(files["review"]):
-            venue_id = record.get("business_id")
-            user_id = record.get("user_id")
-            if not isinstance(venue_id, str) or venue_id not in selected_businesses:
-                continue
-            if (
-                max_reviews_per_business is not None
-                and review_candidates.get(venue_id, 0) >= max_reviews_per_business
-            ):
-                continue
-            if isinstance(user_id, str) and user_id.strip():
-                review_user_ids.add(user_id)
-                review_candidates[venue_id] = review_candidates.get(venue_id, 0) + 1
+        if not selected_businesses:
+            return counts
 
-        for record in _read_json_lines(files["user"]):
-            user_id = record.get("user_id")
-            if not isinstance(user_id, str) or not user_id.strip():
-                counts["skipped"] += 1
-                continue
-            if user_id not in review_user_ids:
-                continue
-            try:
-                review_count = int(record.get("review_count", 0))
-            except (TypeError, ValueError):
-                counts["skipped"] += 1
-                continue
-            connection.execute(
-                """
-                INSERT INTO users (user_id, name, review_count)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    name = excluded.name,
-                    review_count = excluded.review_count
-                """,
-                (user_id, record.get("name"), review_count),
-            )
-            counts["users"] += 1
+        imported_users: set[str] = set()
+        user_batch: list[tuple[str, None, int]] = []
+        interaction_batch: list[tuple[Any, ...]] = []
         review_counts: dict[str, int] = {}
+        review_records_scanned = 0
+        review_scan_started = time.monotonic()
         for record in _read_json_lines(files["review"]):
+            review_records_scanned += 1
+            if review_records_scanned % progress_every == 0:
+                elapsed = max(time.monotonic() - review_scan_started, 0.001)
+                print(
+                    (
+                        f"import: reviews scanned={review_records_scanned:,} "
+                        f"selected={sum(review_counts.values()):,} "
+                        f"rate={review_records_scanned / elapsed:,.0f}/s"
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
             review_id = record.get("review_id")
             user_id = record.get("user_id")
             venue_id = record.get("business_id")
@@ -245,15 +232,72 @@ def import_yelp(
             except (TypeError, ValueError):
                 counts["skipped"] += 1
                 continue
-            exists = connection.execute(
-                "SELECT 1 FROM users WHERE user_id = ? AND EXISTS "
-                "(SELECT 1 FROM venues WHERE venue_id = ?)",
-                (user_id, venue_id),
-            ).fetchone()
-            if exists is None:
-                counts["skipped"] += 1
-                continue
-            connection.execute(
+            if user_id not in imported_users:
+                user_batch.append((user_id, None, 0))
+                imported_users.add(user_id)
+            interaction_batch.append(
+                (
+                    user_id,
+                    venue_id,
+                    rating,
+                    text.strip(),
+                    _timestamp(record.get("date")),
+                    user_id,
+                    venue_id,
+                    text.strip(),
+                )
+            )
+            if len(user_batch) >= batch_size:
+                connection.executemany(
+                    """
+                    INSERT INTO users (user_id, name, review_count)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO NOTHING
+                    """,
+                    user_batch,
+                )
+                counts["users"] += len(user_batch)
+                user_batch.clear()
+            if len(interaction_batch) >= batch_size:
+                if user_batch:
+                    connection.executemany(
+                        """
+                        INSERT INTO users (user_id, name, review_count)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(user_id) DO NOTHING
+                        """,
+                        user_batch,
+                    )
+                    counts["users"] += len(user_batch)
+                    user_batch.clear()
+                connection.executemany(
+                    """
+                    INSERT INTO interactions (
+                        user_id, venue_id, rating, review_text, created_at
+                    )
+                    SELECT ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM interactions
+                        WHERE user_id = ? AND venue_id = ? AND review_text = ?
+                    )
+                    """,
+                    interaction_batch,
+                )
+                counts["reviews"] += len(interaction_batch)
+                interaction_batch.clear()
+            review_counts[venue_id] = review_counts.get(venue_id, 0) + 1
+        if user_batch:
+            connection.executemany(
+                """
+                INSERT INTO users (user_id, name, review_count)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO NOTHING
+                """,
+                user_batch,
+            )
+            counts["users"] += len(user_batch)
+        if interaction_batch:
+            connection.executemany(
                 """
                 INSERT INTO interactions (
                     user_id, venue_id, rating, review_text, created_at
@@ -264,19 +308,26 @@ def import_yelp(
                     WHERE user_id = ? AND venue_id = ? AND review_text = ?
                 )
                 """,
-                (
-                    user_id,
-                    venue_id,
-                    rating,
-                    text.strip(),
-                    _timestamp(record.get("date")),
-                    user_id,
-                    venue_id,
-                    text.strip(),
-                ),
+                interaction_batch,
             )
-            counts["reviews"] += 1
-            review_counts[venue_id] = review_counts.get(venue_id, 0) + 1
+            counts["reviews"] += len(interaction_batch)
+        if enrich_user_metadata and imported_users:
+            for record in _read_json_lines(files["user"]):
+                user_id = record.get("user_id")
+                if user_id not in imported_users:
+                    continue
+                try:
+                    review_count = int(record.get("review_count", 0))
+                except (TypeError, ValueError):
+                    counts["skipped"] += 1
+                    continue
+                connection.execute(
+                    """
+                    UPDATE users SET name = ?, review_count = ?
+                    WHERE user_id = ?
+                    """,
+                    (record.get("name"), review_count, user_id),
+                )
         connection.execute(
             """
             UPDATE users
@@ -316,6 +367,17 @@ def main() -> None:
     parser.add_argument("--categories", default=None, help="Comma-separated categories")
     parser.add_argument("--max-businesses", type=int, default=None)
     parser.add_argument("--max-reviews-per-business", type=int, default=None)
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=100_000,
+        help="Print review-scan progress to stderr every N records",
+    )
+    parser.add_argument(
+        "--enrich-user-metadata",
+        action="store_true",
+        help="Scan the multi-GB Yelp user file for names and source review counts",
+    )
     args = parser.parse_args()
     cities = {city.strip() for city in args.cities.split(",") if city.strip()}
     categories = (
@@ -331,6 +393,8 @@ def main() -> None:
             categories=categories,
             max_businesses=args.max_businesses,
             max_reviews_per_business=args.max_reviews_per_business,
+            enrich_user_metadata=args.enrich_user_metadata,
+            progress_every=args.progress_every,
         ),
         indent=2,
     ))
