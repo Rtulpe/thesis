@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This log establishes the step boundaries for implementing the architecture in `PLAN.md`. The project currently contains only the plan, so no runtime implementation has been started.
+This log establishes the step boundaries for implementing the architecture in `PLAN.md`. The project began as an engineering prototype. The original implementation sequence
+is retained as baseline history; the thesis novelty sequence below supersedes its
+completion claims for the itinerary and benchmark contributions.
 
 ## Numbered steps
 
@@ -23,7 +25,15 @@ This log establishes the step boundaries for implementing the architecture in `P
 15. **Realistic routing** — Add OSRM integration or a local routing-matrix cache with explicit fallback behavior and transit-mode support.
 16. **Live Ollama validation** — Add an opt-in validation path using `qwen3.5:4b` that verifies schema selection, argument generation, MCP execution, and final synthesis.
 17. **User-facing CLI** — Add an `argparse` CLI accepting user ID, destination, time window, and prompt/preferences and returning the itinerary and explanation.
-18. **Thesis benchmarks** — Compare the dynamic agent against random and popularity baselines using feasibility, constraint-violation, relevance, coverage, and latency metrics.
+18. **Prototype benchmarks** — Compare the dynamic agent against random and popularity baselines using feasibility, constraint-violation, relevance, coverage, and latency metrics.
+19. **OPTW solver backend** — Implement deterministic optimization with compatibility scores, time windows, travel matrices, dwell times, and hard budgets.
+20. **Optimization MCP contract** — Expose `optimize_itinerary` and validate its request/response contract alongside the compatibility baseline.
+21. **Structured violation contracts** — Add machine-readable logistics and itinerary violation codes and validation reports.
+22. **Closed-loop plan repair** — Implement bounded substitute retrieval, local re-optimization, and structured repair termination.
+23. **Repair trace capture** — Persist multi-round tool, violation, substitution, and solver traces for analysis.
+24. **Thesis benchmark fixtures** — Add synthetic personas and constraint/failure scenarios with labeled expected outcomes.
+25. **Ablation runner** — Compare direct LLM, MCP-vector, and full OPTW-repair configurations using shared metrics.
+26. **Thesis validation and reporting** — Run the complete evaluation suite and produce reproducible machine-readable and summary reports.
 
 ## Decisions
 
@@ -50,4 +60,21 @@ This log establishes the step boundaries for implementing the architecture in `P
 - Step 15: Complete.
 - Step 16: Complete.
 - Step 17: Complete.
-- Step 18: Complete.
+- Step 18: Baseline complete; thesis backtrack required.
+- Step 19: Complete.
+- Step 20: Complete.
+- Step 21: Complete.
+- Step 22: Complete.
+- Step 23: Complete.
+- Step 24: Complete.
+- Step 25: Complete.
+- Step 26: Complete.
+
+## Thesis backtrack decisions
+
+- The greedy itinerary engine and current benchmark runner remain explicit baselines,
+  not the claimed thesis contribution.
+- The new contribution must be implemented and evaluated as OPTW optimization plus
+  structured closed-loop repair.
+- No runtime code is changed by this plan update. Step 19 requires a separate
+  implementation confirmation after dependency and solver feasibility inspection.

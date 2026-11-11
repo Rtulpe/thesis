@@ -18,6 +18,7 @@ def test_each_server_registers_the_documented_tools():
         "get_city_venues",
         "calculate_travel_matrix",
         "check_venue_open_status",
+        "validate_travel_budget",
     }
     assert set(profiler_server.TOOL_REGISTRY.tools) == {
         "extract_text_vibe",
@@ -26,6 +27,7 @@ def test_each_server_registers_the_documented_tools():
     }
     assert set(itinerary_server.TOOL_REGISTRY.tools) == {
         "build_feasible_itinerary",
+        "optimize_itinerary",
     }
 
 
@@ -71,4 +73,15 @@ def test_tool_signatures_match_plan_contracts():
         "end_time",
         "dwell_time_minutes",
         "start_location",
+    ]
+    assert list(inspect.signature(itinerary_server.optimize_itinerary).parameters) == [
+        "candidate_venue_ids",
+        "compatibility_scores",
+        "start_time",
+        "end_time",
+        "dwell_time_minutes",
+        "travel_mode",
+        "day_of_week",
+        "max_distance",
+        "max_stops",
     ]

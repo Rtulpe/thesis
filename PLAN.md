@@ -247,6 +247,47 @@ upgrade those baselines for reproducible thesis evaluation.
     - Preserve a clearly reported Haversine fallback when routing is unavailable.
     - Test cache hits, cache misses, malformed responses, and fallback behavior.
 
+## 10. Master's Thesis Novelty Plan
+
+The earlier deterministic itinerary and benchmark implementations remain useful
+baselines, but they are not the proposed thesis contribution. The thesis target is
+a neuro-symbolic architecture combining LLM intent interpretation, formal OPTW
+optimization, and closed-loop plan repair.
+
+### Phase 1: Deterministic OPTW optimization backend
+
+- Replace the greedy itinerary path with a deterministic Time-Window Orienteering
+  Problem solver.
+- Add an optimization backend in the itinerary server using Google OR-Tools or a
+  documented exact/branch-and-bound alternative if dependency constraints require it.
+- Maximize total profiler compatibility score subject to venue opening windows,
+  travel-time matrices, hard daily time budgets, dwell times, and configured
+  walking/driving distance limits.
+- Expose `optimize_itinerary` as the solver MCP tool and preserve the existing
+  itinerary tool as a compatibility baseline until migration is validated.
+
+### Phase 2: Closed-loop agentic plan repair
+
+- Return machine-readable violation codes from logistics and itinerary operations,
+  including timing, opening-hours, travel-budget, and distance-budget failures.
+- Implement a bounded repair loop in which the LLM interprets structured failures,
+  profiler retrieval supplies substitutes, and the optimizer re-solves a local
+  candidate neighborhood.
+- Capture multi-round tool calls, violations, substitutions, solver outcomes, and
+  repair termination reasons as structured traces.
+
+### Phase 3: Empirical evaluation and ablations
+
+- Measure itinerary validity, cumulative normalized preference score, and logistics
+  efficiency using travel time and distance.
+- Add synthetic personas and constraint scenarios covering strict windows,
+  preferences, mobility limits, and failure-triggering cases.
+- Run three comparable configurations:
+  1. zero-shot LLM with direct database access,
+  2. MCP plus vector retrieval without the solver,
+  3. the proposed MCP, OPTW, and closed-loop repair architecture.
+- Export reproducible machine-readable results and thesis-ready summaries.
+
 16. [ ] **Live Ollama Tool-Calling Validation**
     - Add an opt-in test/validation script targeting `qwen3.5:4b`.
     - Verify tool-schema interpretation, argument generation, MCP execution, multi-round

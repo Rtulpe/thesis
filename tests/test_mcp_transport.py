@@ -24,6 +24,7 @@ from mcp_servers.mcp_transport import (
                 "get_city_venues",
                 "calculate_travel_matrix",
                 "check_venue_open_status",
+                "validate_travel_budget",
             },
         ),
         (
@@ -34,7 +35,10 @@ from mcp_servers.mcp_transport import (
                 "score_venue_compatibility",
             },
         ),
-        (create_itinerary_server, {"build_feasible_itinerary"}),
+        (
+            create_itinerary_server,
+            {"build_feasible_itinerary", "optimize_itinerary"},
+        ),
     ],
 )
 def test_server_factories_expose_contract_tools(factory, expected_tools):

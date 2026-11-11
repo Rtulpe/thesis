@@ -23,6 +23,7 @@ def create_logistics_server() -> FastMCP:
     server.tool()(logistics_server.get_city_venues)
     server.tool()(logistics_server.calculate_travel_matrix)
     server.tool()(logistics_server.check_venue_open_status)
+    server.tool()(logistics_server.validate_travel_budget)
     return server
 
 
@@ -37,6 +38,7 @@ def create_profiler_server() -> FastMCP:
 def create_itinerary_server() -> FastMCP:
     server = FastMCP("tourism-itinerary")
     server.tool()(itinerary_server.build_feasible_itinerary)
+    server.tool()(itinerary_server.optimize_itinerary)
     return server
 
 

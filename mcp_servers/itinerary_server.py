@@ -6,7 +6,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from core.optw_solver import optimize_time_window_orienteering
+from core.violations import Violation
 from .contracts import ToolRegistry, create_registry
+from . import logistics_server
 
 DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "user_state.db"
 DEFAULT_DAY = "mon"
@@ -159,4 +162,113 @@ def build_feasible_itinerary(
     }
 
 
-TOOL_REGISTRY: ToolRegistry = create_registry(build_feasible_itinerary)
+def optimize_itinerary(
+    candidate_venue_ids: list[str],
+    compatibility_scores: dict[str, float],
+    start_time: str,
+    end_time: str,
+    dwell_time_minutes: int = 90,
+    travel_mode: str = "walking",
+    day_of_week: str = DEFAULT_DAY,
+    max_distance: float | None = None,
+    max_stops: int | None = None,
+) -> dict[str, Any]:
+    """Optimize a scored candidate set using the deterministic OPTW backend."""
+    if not candidate_venue_ids:
+        raise ValueError("candidate_venue_ids must not be empty")
+    if set(compatibility_scores) != set(candidate_venue_ids):
+        raise ValueError("compatibility_scores must match candidate_venue_ids")
+    start_minutes = _parse_time(start_time, "start_time")
+    end_minutes = _parse_time(end_time, "end_time")
+    if end_minutes <= start_minutes:
+        raise ValueError("end_time must be after start_time")
+    if day_of_week not in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}:
+        raise ValueError("day_of_week must be a three-letter lowercase day")
+
+    venues = _load_venues(candidate_venue_ids)
+    matrix = logistics_server.calculate_travel_matrix(
+        candidate_venue_ids,
+        travel_mode=travel_mode,
+    )
+    travel_times = {
+        "__start__": {venue_id: 0.0 for venue_id in candidate_venue_ids},
+        **matrix["travel_times"],
+    }
+    distances = {
+        "__start__": {venue_id: 0.0 for venue_id in candidate_venue_ids},
+        **matrix["distances"],
+    }
+    candidates: list[dict[str, Any]] = []
+    for venue_id in candidate_venue_ids:
+        hours = json.loads(venues[venue_id]["opening_hours_json"]).get(day_of_week)
+        if not hours:
+            continue
+        candidates.append(
+            {
+                "venue_id": venue_id,
+                "score": compatibility_scores[venue_id],
+                "opening_time": _parse_time(hours[0], "opening time"),
+                "closing_time": _parse_time(hours[1], "closing time"),
+            }
+        )
+    if not candidates:
+        return {
+            "status": "infeasible",
+            "objective_score": 0.0,
+            "total_travel_time": 0.0,
+            "total_distance": 0.0,
+            "schedule": [],
+            "dropped_venues": list(candidate_venue_ids),
+            "violations": [
+                Violation(
+                    "NO_OPEN_VENUES",
+                    "No candidate venue is open on the requested day.",
+                ).as_dict()
+            ],
+            "solver": "exact-branch-and-bound",
+        }
+    result = optimize_time_window_orienteering(
+        candidates,
+        travel_times,
+        distances,
+        start_minutes,
+        end_minutes,
+        dwell_time_minutes,
+        max_distance=max_distance,
+        max_stops=max_stops,
+    )
+    result["dropped_venues"] = [
+        venue_id
+        for venue_id in candidate_venue_ids
+        if venue_id not in {stop["venue_id"] for stop in result["schedule"]}
+    ]
+    violations: list[dict[str, Any]] = []
+    if max_distance is not None and result["total_distance"] > max_distance:
+        violations.append(
+            Violation(
+                "TRAVEL_DISTANCE_BUDGET_EXCEEDED",
+                "The itinerary exceeds the configured travel distance budget.",
+                details={
+                    "actual_distance": result["total_distance"],
+                    "max_distance": max_distance,
+                },
+            ).as_dict()
+        )
+    if result["status"] == "infeasible":
+        violations.append(
+            Violation(
+                "NO_FEASIBLE_ITINERARY",
+                "No candidate schedule satisfies the supplied constraints.",
+            ).as_dict()
+        )
+    result["violations"] = violations
+    for stop in result["schedule"]:
+        stop["arrival_time"] = _format_time(stop["arrival_time"])
+        stop["departure_time"] = _format_time(stop["departure_time"])
+    return result
+
+
+TOOL_REGISTRY: ToolRegistry = create_registry(
+    build_feasible_itinerary,
+    optimize_itinerary,
+)

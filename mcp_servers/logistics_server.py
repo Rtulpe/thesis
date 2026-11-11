@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core.routing import CachedRouter, OSRMRouter
+from core.violations import Violation
 from .contracts import ToolRegistry, create_registry
 
 DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "user_state.db"
@@ -185,8 +186,54 @@ def check_venue_open_status(
     return opening <= minute <= closing
 
 
+def validate_travel_budget(
+    venue_ids: list[str],
+    travel_mode: str = "walking",
+    max_distance: float | None = None,
+    max_travel_time: float | None = None,
+) -> dict[str, Any]:
+    """Return machine-readable violations for a route budget."""
+    if max_distance is not None and max_distance < 0:
+        raise ValueError("max_distance must not be negative")
+    if max_travel_time is not None and max_travel_time < 0:
+        raise ValueError("max_travel_time must not be negative")
+    matrix = calculate_travel_matrix(venue_ids, travel_mode)
+    total_distance = 0.0
+    total_time = 0.0
+    for source_id in venue_ids:
+        for destination_id in venue_ids:
+            if source_id == destination_id:
+                continue
+            total_distance += matrix["distances"][source_id][destination_id]
+            total_time += matrix["travel_times"][source_id][destination_id]
+    violations: list[dict[str, Any]] = []
+    if max_distance is not None and total_distance > max_distance:
+        violations.append(
+            Violation(
+                "TRAVEL_DISTANCE_BUDGET_EXCEEDED",
+                "The route exceeds the maximum travel distance.",
+                details={"actual": total_distance, "maximum": max_distance},
+            ).as_dict()
+        )
+    if max_travel_time is not None and total_time > max_travel_time:
+        violations.append(
+            Violation(
+                "TRAVEL_TIME_BUDGET_EXCEEDED",
+                "The route exceeds the maximum travel time.",
+                details={"actual": total_time, "maximum": max_travel_time},
+            ).as_dict()
+        )
+    return {
+        "valid": not violations,
+        "total_distance": total_distance,
+        "total_travel_time": total_time,
+        "violations": violations,
+    }
+
+
 TOOL_REGISTRY: ToolRegistry = create_registry(
     get_city_venues,
     calculate_travel_matrix,
     check_venue_open_status,
+    validate_travel_budget,
 )

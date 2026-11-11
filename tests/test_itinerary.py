@@ -74,3 +74,43 @@ def test_build_feasible_itinerary_rejects_invalid_constraints(database_path):
         itinerary_server.build_feasible_itinerary(
             ["venue_museum"], "10:00", "18:00", dwell_time_minutes=0
         )
+
+
+def test_optimize_itinerary_maximizes_compatibility(database_path):
+    result = itinerary_server.optimize_itinerary(
+        ["venue_museum", "venue_market"],
+        {"venue_museum": 0.4, "venue_market": 0.9},
+        "09:00",
+        "18:00",
+        dwell_time_minutes=90,
+    )
+
+    assert result["status"] == "feasible"
+    assert result["objective_score"] == 1.3
+    assert [stop["venue_id"] for stop in result["schedule"]] == [
+        "venue_museum",
+        "venue_market",
+    ]
+
+
+def test_optimize_itinerary_rejects_score_mismatch(database_path):
+    with pytest.raises(ValueError, match="compatibility_scores"):
+        itinerary_server.optimize_itinerary(
+            ["venue_museum"],
+            {},
+            "09:00",
+            "18:00",
+        )
+
+
+def test_optimize_itinerary_reports_structured_violations(database_path):
+    result = itinerary_server.optimize_itinerary(
+        ["venue_museum"],
+        {"venue_museum": 1.0},
+        "16:00",
+        "18:00",
+        dwell_time_minutes=180,
+    )
+
+    assert result["status"] == "infeasible"
+    assert result["violations"][0]["code"] == "NO_FEASIBLE_ITINERARY"

@@ -102,3 +102,13 @@ def test_check_venue_open_status_rejects_invalid_inputs(database_path):
 def test_seed_opening_hours_are_valid_json(database_path):
     venues = logistics_server.get_city_venues("Amsterdam")
     assert json.loads(venues[0]["opening_hours_json"]) == venues[0]["opening_hours"]
+
+
+def test_validate_travel_budget_returns_structured_violation(database_path):
+    result = logistics_server.validate_travel_budget(
+        ["venue_museum", "venue_market"],
+        max_distance=0,
+    )
+
+    assert result["valid"] is False
+    assert result["violations"][0]["code"] == "TRAVEL_DISTANCE_BUDGET_EXCEEDED"
