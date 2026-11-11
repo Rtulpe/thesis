@@ -1,0 +1,108 @@
+@startuml
+title Neuro-Symbolic Agentic Tourism MCP Architecture
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam ArrowColor #4A5568
+
+actor Traveller
+
+package "User Interface" {
+  component "CLI / API" as CLI
+}
+
+package "Agent Layer" {
+  component "Dynamic Tool Orchestrator\n(qwen3.5:4b, optional)" as ORCH
+  component "Deterministic Travel\nOrchestrator" as DET
+  component "Closed-Loop\nPlan Repair" as REPAIR
+  component "Execution Trace\nRecorder" as TRACE
+}
+
+package "MCP Server Layer" {
+  component "User-State MCP" as USER
+  component "Logistics MCP" as LOG
+  component "Profiler MCP" as PROF
+  component "Itinerary MCP" as ITIN
+}
+
+package "Optimization and Retrieval" {
+  component "OPTW Solver\n(exact branch-and-bound)" as OPTW
+  component "Greedy Itinerary\n(baseline)" as GREEDY
+  component "nomic-embed-text\nsemantic embeddings" as EMBED
+  component "Routing Cache /\nOSRM / Haversine fallback" as ROUTE
+}
+
+database "SQLite\nuser_state.db" as DB
+database "Embedding Cache" as EMBEDDB
+database "Routing Cache" as ROUTEDB
+folder "Yelp JSONL\nbusiness/review/user" as YELP
+component "Ollama\nlocalhost:11434" as OLLAMA
+component "Evaluation Fixtures /\nAblation Runner" as EVAL
+component "scripts/import_data.py" as IMPORT
+component "JSON trace report" as TRACEFILE
+component "Direct LLM baseline" as BASELINE
+component "JSON + summary reports" as REPORTS
+
+Traveller --> CLI : request\n(user, city, preferences, window)
+CLI --> ORCH : dynamic mode
+CLI --> DET : offline deterministic mode
+
+ORCH --> USER : discover/call tools
+ORCH --> LOG : discover/call tools
+ORCH --> PROF : discover/call tools
+ORCH --> ITIN : discover/call tools
+DET --> USER
+DET --> LOG
+DET --> PROF
+DET --> ITIN
+
+USER --> DB : profiles/history
+LOG --> DB : venues/hours
+LOG --> ROUTE : travel matrix
+ROUTE --> ROUTEDB : cache routes
+ROUTE --> OLLAMA : optional OSRM is external\n(not shown)
+
+PROF --> DB : Yelp review text
+PROF --> EMBED : embed reviews/user text
+EMBED --> OLLAMA : /api/embeddings
+EMBED --> EMBEDDB : cached vectors
+PROF --> ORCH : compatibility scores
+PROF --> DET : compatibility scores
+
+ITIN --> GREEDY : baseline schedule
+ITIN --> OPTW : optimize_itinerary
+OPTW --> LOG : travel matrix contract
+OPTW --> REPAIR : violations
+
+ORCH --> REPAIR : structured failure context
+REPAIR --> PROF : substitute candidates
+REPAIR --> ITIN : bounded re-optimization
+REPAIR --> TRACE : attempts/substitutes/results
+ORCH --> TRACE : tool-call rounds
+TRACE --> TRACEFILE
+
+YELP --> IMPORT
+IMPORT --> DB : users/venues/interactions
+
+EVAL --> CLI : benchmark runners
+EVAL --> DET : MCP-vector baseline
+EVAL --> OPTW : proposed solver
+EVAL --> REPAIR : proposed repair
+EVAL --> BASELINE
+EVAL --> REPORTS
+
+note right of REPAIR
+  Repair loop:
+  1. Receive violation code
+  2. Ask profiler for substitutes
+  3. Re-run OPTW locally
+  4. Stop on success or bound
+end note
+
+note bottom of EMBED
+  MBTI is not currently wired
+  into recommendation scoring.
+end note
+
+@enduml
